@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+:root {
+  --v-red: #FF4D6D;
+  --v-orange: #FF8C42;
+  --v-yellow: #FFC371;
+  --v-green: #34D399;
+  --v-teal: #0CA4A5;
+  --v-blue: #3B82F6;
+  --v-purple: #8B5CF6;
+  --background: #FAFAFA;
+  --foreground: #0F172A;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Vibrant gradient utility classes */
+.gradient-splash {
+  background: linear-gradient(135deg, var(--v-red), var(--v-orange), var(--v-blue), var(--v-purple));
+}
+
+.gradient-sidebar {
+  background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+}
+
+.gradient-card-red {
+  background: linear-gradient(135deg, #FF4D6D22, #FF8C4215);
+}
+.gradient-card-blue {
+  background: linear-gradient(135deg, #3B82F622, #8B5CF615);
+}
+.gradient-card-green {
+  background: linear-gradient(135deg, #34D39922, #0CA4A515);
+}
+.gradient-card-orange {
+  background: linear-gradient(135deg, #FF8C4222, #FFC37115);
+}
+
+.table-header-gradient {
+  background: linear-gradient(135deg, #0F172A, #1E293B);
+}
