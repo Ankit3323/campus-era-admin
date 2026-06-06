@@ -2,7 +2,7 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { Users, Building2, UtensilsCrossed, MessageSquare, TrendingUp, Eye } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -16,18 +16,18 @@ export default function DashboardPage() {
     async function fetchStats() {
       try {
         const [usersSnap, pgSnap, messSnap, postsSnap, reportsSnap] = await Promise.all([
-          getDocs(collection(db, 'users')),
-          getDocs(collection(db, 'rooms')),
-          getDocs(collection(db, 'mess')),
-          getDocs(collection(db, 'discussions')),
-          getDocs(query(collection(db, 'reported_posts'), where('status', '==', 'pending'))),
+          getCountFromServer(collection(db, 'users')),
+          getCountFromServer(collection(db, 'rooms')),
+          getCountFromServer(collection(db, 'mess')),
+          getCountFromServer(collection(db, 'discussions')),
+          getCountFromServer(query(collection(db, 'reported_posts'), where('status', '==', 'pending'))),
         ]);
         setStats({
-          users: usersSnap.size,
-          pg: pgSnap.size,
-          mess: messSnap.size,
-          posts: postsSnap.size,
-          reports: reportsSnap.size,
+          users: usersSnap.data().count,
+          pg: pgSnap.data().count,
+          mess: messSnap.data().count,
+          posts: postsSnap.data().count,
+          reports: reportsSnap.data().count,
         });
       } catch (error) {
         console.error("Error fetching stats:", error);

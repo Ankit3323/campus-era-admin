@@ -2,9 +2,11 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc, addDoc } from 'firebase/firestore';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { Ban, Trash2, Unlock, ShieldAlert, Search, Users } from 'lucide-react';
+import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X } from 'lucide-react';
 
 interface User {
   id: string;
@@ -19,6 +21,11 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Add Owner State
+  const [showAddOwnerModal, setShowAddOwnerModal] = useState(false);
+  const [newOwnerData, setNewOwnerData] = useState({ name: '', email: '', password: '', type: 'pg_owner' });
+  const [isCreatingOwner, setIsCreatingOwner] = useState(false);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -34,10 +41,14 @@ export default function UsersPage() {
 
   useEffect(() => { fetchUsers(); }, []);
 
-  const handleToggleBlock = async (userId: string, currentStatus: boolean) => {
+  const handleToggleBlock = async (userId: string, currentStatus: boolean, email?: string) => {
     if (!confirm(`${currentStatus ? 'Unblock' : 'Block'} this user?`)) return;
     try {
       await updateDoc(doc(db, 'users', userId), { blocked: !currentStatus });
+      // If unblocking, make sure we also remove them from banned_emails
+      if (currentStatus && email) {
+        await deleteDoc(doc(db, 'banned_emails', email));
+      }
       fetchUsers();
     } catch { alert('Failed to update'); }
   };
@@ -51,9 +62,70 @@ export default function UsersPage() {
           reason: 'Banned by admin', bannedAt: new Date(),
         });
       }
-      await deleteDoc(doc(db, 'users', user.id));
+      
+      // We block the user in Firestore instead of deleting them. 
+      // This prevents the flutter app from auto-creating a new document if they log in again,
+      // and properly triggers the "Account Blocked" error.
+      await updateDoc(doc(db, 'users', user.id), { blocked: true });
       fetchUsers();
     } catch { alert('Failed to ban'); }
+  };
+
+  const handleAddOwner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingOwner(true);
+    try {
+      // 1. Initialize secondary app to avoid logging out the current admin
+      const adminAppName = 'AdminCreatorApp';
+      const apps = getApps();
+      let adminApp = apps.find(a => a.name === adminAppName);
+      if (!adminApp) {
+        const defaultApp = getApp();
+        adminApp = initializeApp(defaultApp.options, adminAppName);
+      }
+      
+      const adminAuth = getAuth(adminApp);
+      
+      // 2. Create the user
+      const userCredential = await createUserWithEmailAndPassword(adminAuth, newOwnerData.email, newOwnerData.password);
+      const newUserId = userCredential.user.uid;
+      
+      // 3. Create the user doc in Firestore
+      await setDoc(doc(db, 'users', newUserId), {
+        id: newUserId,
+        name: newOwnerData.name,
+        email: newOwnerData.email,
+        role: 'owner',
+        ownerType: newOwnerData.type,
+        isPremium: true,
+        profileCompleted: false,
+        createdat: new Date().toISOString()
+      });
+      
+      // 4. Create the subscription doc in Firestore
+      await addDoc(collection(db, 'subscriptions'), {
+        ownerId: newUserId,
+        planName: 'premium',
+        status: 'active',
+        paymentMethod: 'admin_granted',
+        startDate: new Date().toISOString(),
+        endDate: new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000).toISOString(), // 10 years
+        amount: 0.0
+      });
+      
+      // 5. Cleanup auth
+      await signOut(adminAuth);
+      
+      // 6. Success
+      alert('Owner account created successfully!');
+      setShowAddOwnerModal(false);
+      setNewOwnerData({ name: '', email: '', password: '', type: 'pg_owner' });
+      fetchUsers();
+    } catch (error: any) {
+      alert(`Error creating owner: ${error.message}`);
+    } finally {
+      setIsCreatingOwner(false);
+    }
   };
 
   const filteredUsers = users.filter(u =>
@@ -77,9 +149,18 @@ export default function UsersPage() {
             <Users className="w-6 h-6 text-blue-600" />
             <h1 className="text-2xl font-bold text-slate-900">Manage Users</h1>
           </div>
-          <span className="bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">
-            {filteredUsers.length} users
-          </span>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowAddOwnerModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Add Owner
+            </button>
+            <span className="bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">
+              {filteredUsers.length} users
+            </span>
+          </div>
         </div>
 
         {/* Search */}
@@ -134,7 +215,7 @@ export default function UsersPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right space-x-2">
-                      <button onClick={() => handleToggleBlock(u.id, u.blocked || false)}
+                      <button onClick={() => handleToggleBlock(u.id, u.blocked || false, u.email)}
                         className={`p-2 rounded-lg transition-colors ${u.blocked ? 'text-emerald-600 hover:bg-emerald-50' : 'text-amber-600 hover:bg-amber-50'}`}
                         title={u.blocked ? 'Unblock' : 'Block'}>
                         {u.blocked ? <Unlock className="w-5 h-5" /> : <Ban className="w-5 h-5" />}
@@ -151,6 +232,88 @@ export default function UsersPage() {
           </div>
         </div>
       </div>
+
+      {/* Add Owner Modal */}
+      {showAddOwnerModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Add Owner Manually</h3>
+              <button onClick={() => setShowAddOwnerModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleAddOwner} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
+                <input
+                  required
+                  type="text"
+                  value={newOwnerData.name}
+                  onChange={e => setNewOwnerData({...newOwnerData, name: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
+                  placeholder="e.g. John Doe"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
+                <input
+                  required
+                  type="email"
+                  value={newOwnerData.email}
+                  onChange={e => setNewOwnerData({...newOwnerData, email: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
+                  placeholder="e.g. john@example.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <input
+                  required
+                  type="password"
+                  minLength={6}
+                  value={newOwnerData.password}
+                  onChange={e => setNewOwnerData({...newOwnerData, password: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
+                  placeholder="Minimum 6 characters"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Property Type</label>
+                <select
+                  value={newOwnerData.type}
+                  onChange={e => setNewOwnerData({...newOwnerData, type: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm bg-white"
+                >
+                  <option value="pg_owner">PG / Room Owner</option>
+                  <option value="mess_owner">Mess Service Owner</option>
+                </select>
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddOwnerModal(false)}
+                  className="flex-1 px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingOwner}
+                  className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-50 flex justify-center"
+                >
+                  {isCreatingOwner ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Create Owner'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </ProtectedRoute>
   );
 }

@@ -30,16 +30,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser && firebaseUser.email) {
-        // Run the async check
         const allowed = await isAllowedAdmin(firebaseUser.email);
-        
         if (allowed) {
           setUser(firebaseUser);
           setIsAdminState(true);
           setIsSuperAdminState(isSuperAdmin(firebaseUser.email));
         } else {
-          // If they managed to log in with Google but are not authorized, log them out
-          await signOut(auth);
+          // signOut() hataya — infinite loop fix
           setUser(null);
           setIsAdminState(false);
           setIsSuperAdminState(false);

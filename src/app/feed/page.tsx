@@ -2,7 +2,7 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { Trash2, AlertTriangle, CheckCircle, Shield, MessageSquare, Search } from 'lucide-react';
 
@@ -18,10 +18,53 @@ export default function FeedPage() {
     try {
       const [reportsSnap, postsSnap] = await Promise.all([
         getDocs(collection(db, 'reported_posts')),
-        getDocs(collection(db, 'discussions'))
+        getDocs(collection(db, 'discussions')),
       ]);
       
-      setReports(reportsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const rawReports = reportsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const userIds = new Set<string>();
+      rawReports.forEach((r: any) => {
+         if (r.postAuthorId) userIds.add(r.postAuthorId);
+         if (r.reportedByUserId) userIds.add(r.reportedByUserId);
+      });
+
+      const usersMap = new Map();
+      await Promise.all(Array.from(userIds).map(async (uid) => {
+         try {
+           const userSnap = await getDoc(doc(db, 'users', uid));
+           if (userSnap.exists()) {
+             usersMap.set(uid, { id: userSnap.id, ...userSnap.data() });
+           }
+         } catch (e) {
+           console.error('Failed to fetch user:', uid);
+         }
+      }));
+      const pendingGroupsMap = new Map();
+      
+      rawReports.filter((r: any) => r.status === 'pending').forEach((r: any) => {
+        if (!pendingGroupsMap.has(r.postId)) {
+           pendingGroupsMap.set(r.postId, {
+              postId: r.postId,
+              postContent: r.postContent,
+              postAuthorId: r.postAuthorId,
+              postAuthor: usersMap.get(r.postAuthorId) || {},
+              reportIds: [],
+              reporters: []
+           });
+        }
+        const group = pendingGroupsMap.get(r.postId);
+        group.reportIds.push(r.id);
+        const reporterUser = usersMap.get(r.reportedByUserId) || {};
+        group.reporters.push({
+           reportId: r.id,
+           userId: r.reportedByUserId,
+           reason: r.reason,
+           name: reporterUser.name || 'Unknown',
+           email: reporterUser.email || 'No email',
+        });
+      });
+      setReports(Array.from(pendingGroupsMap.values()));
       
       let postsData = postsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       postsData.sort((a: any, b: any) => {
@@ -36,25 +79,25 @@ export default function FeedPage() {
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleDismiss = async (reportId: string) => {
+  const handleDismissAll = async (reportIds: string[]) => {
     try {
-      await updateDoc(doc(db, 'reported_posts', reportId), { status: 'dismissed' });
+      await Promise.all(reportIds.map(id => updateDoc(doc(db, 'reported_posts', id), { status: 'dismissed' })));
       fetchData();
     } catch { alert('Failed to dismiss'); }
   };
 
-  const handleDeletePost = async (postId: string, reportId?: string) => {
+  const handleDeletePost = async (postId: string, reportIds?: string[]) => {
     if (!confirm('Delete this post permanently?')) return;
     try {
       await deleteDoc(doc(db, 'discussions', postId));
-      if (reportId) {
-        await updateDoc(doc(db, 'reported_posts', reportId), { status: 'deleted_post' });
+      if (reportIds && reportIds.length > 0) {
+        await Promise.all(reportIds.map(id => updateDoc(doc(db, 'reported_posts', id), { status: 'deleted_post' })));
       }
       fetchData();
     } catch { alert('Failed to delete'); }
   };
 
-  const pendingReports = reports.filter(r => r.status === 'pending');
+  const pendingReports = reports; // Already filtered and grouped
   const filteredPosts = posts.filter(p => 
     (p.authorName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (p.content || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -115,30 +158,42 @@ export default function FeedPage() {
                 <p className="text-slate-500 mt-1">No pending reports to review.</p>
               </div>
             ) : (
-              pendingReports.map((report) => (
-                <div key={report.id} className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              pendingReports.map((reportGroup) => (
+                <div key={reportGroup.postId} className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-start gap-4">
                     <div className="h-10 w-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
                       <Shield className="w-5 h-5 text-amber-600" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">Reported</span>
-                        <span className="text-sm text-slate-500">Reason: <span className="font-medium text-slate-700">{report.reason}</span></span>
+                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">Reported {reportGroup.reporters.length} times</span>
+                        <span className="text-sm text-slate-500">Poster: <span className="font-medium text-slate-700">{reportGroup.postAuthor.name || 'Unknown'} ({reportGroup.postAuthor.email || 'No email'})</span></span>
                       </div>
-                      <div className="bg-slate-50 rounded-xl p-4 text-slate-700 text-sm border border-slate-100">
-                        {report.postContent || 'No text content'}
+                      <div className="bg-slate-50 rounded-xl p-4 text-slate-700 text-sm border border-slate-100 mb-4">
+                        {reportGroup.postContent || 'No text content'}
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Reporters ({reportGroup.reporters.length})</h4>
+                        {reportGroup.reporters.map((reporter: any, idx: number) => (
+                          <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-sm p-2 bg-slate-50 rounded-lg">
+                            <span className="font-medium text-slate-700">{reporter.name}</span>
+                            <span className="text-slate-500 text-xs">{reporter.email}</span>
+                            <span className="text-slate-400 hidden sm:inline">•</span>
+                            <span className="text-amber-600 italic">"{reporter.reason}"</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
                   <div className="flex gap-3 mt-4 ml-14">
-                    <button onClick={() => handleDeletePost(report.postId, report.id)}
+                    <button onClick={() => handleDeletePost(reportGroup.postId, reportGroup.reportIds)}
                       className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md" style={{ background: 'linear-gradient(135deg, #EF4444, #DC2626)' }}>
                       <Trash2 className="w-4 h-4 inline mr-2" />Delete Post
                     </button>
-                    <button onClick={() => handleDismiss(report.id)}
+                    <button onClick={() => handleDismissAll(reportGroup.reportIds)}
                       className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl text-sm font-semibold transition-colors">
-                      Dismiss
+                      Dismiss All
                     </button>
                   </div>
                 </div>
