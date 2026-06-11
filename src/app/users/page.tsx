@@ -2,11 +2,11 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc, addDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc, query, where, writeBatch } from 'firebase/firestore';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X, CheckCircle, XCircle } from 'lucide-react';
+import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X, CheckCircle, XCircle, UserX, AlertTriangle } from 'lucide-react';
 
 interface User {
   id: string;
@@ -18,15 +18,61 @@ interface User {
   isVerifiedOwner?: boolean;
 }
 
+// ── Confirm Dialog ─────────────────────────────────────────────────────────────
+function ConfirmDialog({
+  open, title, message, confirmLabel, danger,
+  onConfirm, onCancel,
+}: {
+  open: boolean; title: string; message: string;
+  confirmLabel: string; danger?: boolean;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full border border-slate-200">
+        <div className="flex items-center gap-3 mb-3">
+          <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${danger ? 'bg-red-100' : 'bg-amber-100'}`}>
+            <AlertTriangle className={`w-5 h-5 ${danger ? 'text-red-600' : 'text-amber-600'}`} />
+          </div>
+          <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+        </div>
+        <p className="text-slate-600 text-sm mb-6 leading-relaxed">{message}</p>
+        <div className="flex gap-3 justify-end">
+          <button onClick={onCancel}
+            className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Add Owner State
   const [showAddOwnerModal, setShowAddOwnerModal] = useState(false);
   const [newOwnerData, setNewOwnerData] = useState({ name: '', email: '', password: '', type: 'pg_owner' });
   const [isCreatingOwner, setIsCreatingOwner] = useState(false);
+
+  // Confirm dialog state
+  const [dialog, setDialog] = useState<{
+    open: boolean; title: string; message: string;
+    confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  }>({ open: false, title: '', message: '', confirmLabel: '', onConfirm: () => {} });
+
+  const showConfirm = (opts: Omit<typeof dialog, 'open'>) =>
+    setDialog({ ...opts, open: true });
+  const closeDialog = () => setDialog(d => ({ ...d, open: false }));
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -43,50 +89,130 @@ export default function UsersPage() {
   useEffect(() => { fetchUsers(); }, []);
 
   const handleToggleBlock = async (userId: string, currentStatus: boolean, email?: string) => {
-    if (!confirm(`${currentStatus ? 'Unblock' : 'Block'} this user?`)) return;
-    try {
-      await updateDoc(doc(db, 'users', userId), { blocked: !currentStatus });
-      // If unblocking, make sure we also remove them from banned_emails
-      if (currentStatus && email) {
-        await deleteDoc(doc(db, 'banned_emails', email));
-      }
-      fetchUsers();
-    } catch { alert('Failed to update'); }
+    showConfirm({
+      title: currentStatus ? 'Unblock User' : 'Block User',
+      message: currentStatus
+        ? 'This will restore access for this user.'
+        : 'This will prevent the user from accessing the app.',
+      confirmLabel: currentStatus ? 'Unblock' : 'Block',
+      danger: !currentStatus,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await updateDoc(doc(db, 'users', userId), { blocked: !currentStatus });
+          if (currentStatus && email) {
+            await deleteDoc(doc(db, 'banned_emails', email));
+          }
+          fetchUsers();
+        } catch { alert('Failed to update'); }
+      },
+    });
   };
 
   const handleToggleVerification = async (userId: string, currentStatus: boolean) => {
-    if (!confirm(`Are you sure you want to ${currentStatus ? 'revoke verification for' : 'verify'} this owner?`)) return;
-    try {
-      await updateDoc(doc(db, 'users', userId), { isVerifiedOwner: !currentStatus });
-      fetchUsers();
-    } catch {
-      alert('Failed to update verification status');
-    }
+    showConfirm({
+      title: currentStatus ? 'Revoke Verification' : 'Verify Owner',
+      message: currentStatus
+        ? 'This will remove the verified badge from this owner.'
+        : 'This will mark this owner as verified.',
+      confirmLabel: currentStatus ? 'Revoke' : 'Verify',
+      danger: currentStatus,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await updateDoc(doc(db, 'users', userId), { isVerifiedOwner: !currentStatus });
+          fetchUsers();
+        } catch { alert('Failed to update verification status'); }
+      },
+    });
   };
 
   const handleBanUser = async (user: User) => {
-    if (!confirm(`Permanently ban ${user.name}?`)) return;
-    try {
-      if (user.email) {
-        await setDoc(doc(db, 'banned_emails', user.email), {
-          email: user.email, userId: user.id, userName: user.name || '',
-          reason: 'Banned by admin', bannedAt: new Date(),
-        });
-      }
-      
-      // We block the user in Firestore instead of deleting them. 
-      // This prevents the flutter app from auto-creating a new document if they log in again,
-      // and properly triggers the "Account Blocked" error.
-      await updateDoc(doc(db, 'users', user.id), { blocked: true });
-      fetchUsers();
-    } catch { alert('Failed to ban'); }
+    showConfirm({
+      title: 'Permanently Ban User',
+      message: `Ban "${user.name}"? Their email will be blacklisted and account blocked. You can unban them later.`,
+      confirmLabel: 'Ban User',
+      danger: false,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          if (user.email) {
+            await setDoc(doc(db, 'banned_emails', user.email), {
+              email: user.email, userId: user.id, userName: user.name || '',
+              reason: 'Banned by admin', bannedAt: new Date(),
+            });
+          }
+          await updateDoc(doc(db, 'users', user.id), { blocked: true });
+          fetchUsers();
+        } catch { alert('Failed to ban'); }
+      },
+    });
+  };
+
+  /**
+   * Delete Account — nukes everything:
+   *  • users/{uid}
+   *  • All discussions where authorId == uid
+   *  • All reported_posts where postAuthorId == uid OR reportedByUserId == uid
+   *  • Their banned_emails entry if any
+   *
+   * Note: Firebase Auth account deletion requires Admin SDK (server-side).
+   * The user can re-register freely after this. To also delete the Auth
+   * record, call a Cloud Function from here.
+   */
+  const handleDeleteAccount = async (user: User) => {
+    showConfirm({
+      title: 'Delete Entire Account',
+      message: `⚠️ This will permanently delete "${user.name}"'s account and ALL their data — posts, reports, everything. They can re-register with the same email if they want. This cannot be undone.`,
+      confirmLabel: 'Yes, Delete Everything',
+      danger: true,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          const batch = writeBatch(db);
+
+          // 1. Delete user doc
+          batch.delete(doc(db, 'users', user.id));
+
+          // 2. Delete their banned_emails entry if exists
+          if (user.email) {
+            batch.delete(doc(db, 'banned_emails', user.email));
+          }
+
+          // 3. Delete all their posts
+          const postsSnap = await getDocs(
+            query(collection(db, 'discussions'), where('authorId', '==', user.id))
+          );
+          postsSnap.docs.forEach(d => batch.delete(d.ref));
+
+          // 4. Delete all reports about their posts
+          const reportsByAuthorSnap = await getDocs(
+            query(collection(db, 'reported_posts'), where('postAuthorId', '==', user.id))
+          );
+          reportsByAuthorSnap.docs.forEach(d => batch.delete(d.ref));
+
+          // 5. Delete all reports they filed
+          const reportsByUserSnap = await getDocs(
+            query(collection(db, 'reported_posts'), where('reportedByUserId', '==', user.id))
+          );
+          reportsByUserSnap.docs.forEach(d => batch.delete(d.ref));
+
+          await batch.commit();
+
+          alert(`Account and all data for "${user.name}" has been deleted.`);
+          fetchUsers();
+        } catch (err) {
+          console.error(err);
+          alert('Failed to delete account. Check console for details.');
+        }
+      },
+    });
   };
 
   const handleAddOwner = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreatingOwner(true);
     try {
-      // 1. Initialize secondary app to avoid logging out the current admin
       const adminAppName = 'AdminCreatorApp';
       const apps = getApps();
       let adminApp = apps.find(a => a.name === adminAppName);
@@ -94,14 +220,11 @@ export default function UsersPage() {
         const defaultApp = getApp();
         adminApp = initializeApp(defaultApp.options, adminAppName);
       }
-      
+
       const adminAuth = getAuth(adminApp);
-      
-      // 2. Create the user
       const userCredential = await createUserWithEmailAndPassword(adminAuth, newOwnerData.email, newOwnerData.password);
       const newUserId = userCredential.user.uid;
-      
-      // 3. Create the user doc in Firestore
+
       await setDoc(doc(db, 'users', newUserId), {
         id: newUserId,
         name: newOwnerData.name,
@@ -113,11 +236,9 @@ export default function UsersPage() {
         isVerifiedOwner: true,
         createdat: new Date().toISOString()
       });
-      
-      // 4. Cleanup auth
+
       await signOut(adminAuth);
-      
-      // 5. Success
+
       alert('Owner account created successfully!');
       setShowAddOwnerModal(false);
       setNewOwnerData({ name: '', email: '', password: '', type: 'pg_owner' });
@@ -135,15 +256,17 @@ export default function UsersPage() {
   );
 
   const getRoleBadge = (role?: string) => {
-    switch(role) {
-      case 'admin': return { bg: 'linear-gradient(135deg, #8B5CF6, #6D28D9)', text: 'white' };
-      case 'owner': return { bg: 'linear-gradient(135deg, #34D399, #059669)', text: 'white' };
-      default: return { bg: 'linear-gradient(135deg, #3B82F6, #2563EB)', text: 'white' };
+    switch (role) {
+      case 'admin': return { bg: 'linear-gradient(135deg, #8B5CF6, #6D28D9)' };
+      case 'owner': return { bg: 'linear-gradient(135deg, #34D399, #059669)' };
+      default: return { bg: 'linear-gradient(135deg, #3B82F6, #2563EB)' };
     }
   };
 
   return (
     <ProtectedRoute>
+      <ConfirmDialog {...dialog} onCancel={closeDialog} />
+
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div className="flex items-center gap-3">
@@ -221,22 +344,30 @@ export default function UsersPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-right space-x-2">
+                    <td className="px-6 py-4 text-right space-x-1">
+                      {/* Verify (owners only) */}
                       {u.role === 'owner' && (
                         <button onClick={() => handleToggleVerification(u.id, u.isVerifiedOwner || false)}
                           className={`p-2 rounded-lg transition-colors ${u.isVerifiedOwner ? 'text-blue-600 hover:bg-blue-50' : 'text-slate-400 hover:bg-slate-50'}`}
                           title={u.isVerifiedOwner ? 'Revoke Verification' : 'Verify Owner'}>
-                          {u.isVerifiedOwner ? <CheckCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                          <CheckCircle className="w-5 h-5" />
                         </button>
                       )}
+                      {/* Block / Unblock */}
                       <button onClick={() => handleToggleBlock(u.id, u.blocked || false, u.email)}
                         className={`p-2 rounded-lg transition-colors ${u.blocked ? 'text-emerald-600 hover:bg-emerald-50' : 'text-amber-600 hover:bg-amber-50'}`}
                         title={u.blocked ? 'Unblock' : 'Block'}>
                         {u.blocked ? <Unlock className="w-5 h-5" /> : <Ban className="w-5 h-5" />}
                       </button>
+                      {/* Permanent Ban */}
                       <button onClick={() => handleBanUser(u)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Permanently Ban">
+                        className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors" title="Permanently Ban">
                         <ShieldAlert className="w-5 h-5" />
+                      </button>
+                      {/* Delete Account */}
+                      <button onClick={() => handleDeleteAccount(u)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Account & All Data">
+                        <UserX className="w-5 h-5" />
                       </button>
                     </td>
                   </tr>
@@ -257,27 +388,23 @@ export default function UsersPage() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <form onSubmit={handleAddOwner} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
                 <input
-                  required
-                  type="text"
-                  value={newOwnerData.name}
-                  onChange={e => setNewOwnerData({...newOwnerData, name: e.target.value})}
+                  required type="text" value={newOwnerData.name}
+                  onChange={e => setNewOwnerData({ ...newOwnerData, name: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
                   placeholder="e.g. John Doe"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
                 <input
-                  required
-                  type="email"
-                  value={newOwnerData.email}
-                  onChange={e => setNewOwnerData({...newOwnerData, email: e.target.value})}
+                  required type="email" value={newOwnerData.email}
+                  onChange={e => setNewOwnerData({ ...newOwnerData, email: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
                   placeholder="e.g. john@example.com"
                 />
@@ -286,11 +413,8 @@ export default function UsersPage() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
                 <input
-                  required
-                  type="password"
-                  minLength={6}
-                  value={newOwnerData.password}
-                  onChange={e => setNewOwnerData({...newOwnerData, password: e.target.value})}
+                  required type="password" minLength={6} value={newOwnerData.password}
+                  onChange={e => setNewOwnerData({ ...newOwnerData, password: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
                   placeholder="Minimum 6 characters"
                 />
@@ -300,7 +424,7 @@ export default function UsersPage() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">Property Type</label>
                 <select
                   value={newOwnerData.type}
-                  onChange={e => setNewOwnerData({...newOwnerData, type: e.target.value})}
+                  onChange={e => setNewOwnerData({ ...newOwnerData, type: e.target.value })}
                   className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm bg-white"
                 >
                   <option value="pg_owner">PG / Room Owner</option>
@@ -309,19 +433,15 @@ export default function UsersPage() {
               </div>
 
               <div className="pt-4 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAddOwnerModal(false)}
-                  className="flex-1 px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-                >
+                <button type="button" onClick={() => setShowAddOwnerModal(false)}
+                  className="flex-1 px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isCreatingOwner}
-                  className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-50 flex justify-center"
-                >
-                  {isCreatingOwner ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Create Owner'}
+                <button type="submit" disabled={isCreatingOwner}
+                  className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-50 flex justify-center">
+                  {isCreatingOwner
+                    ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    : 'Create Owner'}
                 </button>
               </div>
             </form>

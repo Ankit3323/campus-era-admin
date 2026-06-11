@@ -2,10 +2,46 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, deleteDoc, updateDoc, getDoc, query, where, writeBatch } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Trash2, AlertTriangle, CheckCircle, Shield, MessageSquare, Search } from 'lucide-react';
+import { Trash2, AlertTriangle, CheckCircle, Shield, MessageSquare, Search, UserX, Ban } from 'lucide-react';
 
+// ── Confirm Dialog ────────────────────────────────────────────────────────────
+function ConfirmDialog({
+  open, title, message, confirmLabel, danger,
+  onConfirm, onCancel,
+}: {
+  open: boolean; title: string; message: string;
+  confirmLabel: string; danger?: boolean;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full border border-slate-200">
+        <div className="flex items-center gap-3 mb-3">
+          <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${danger ? 'bg-red-100' : 'bg-amber-100'}`}>
+            <AlertTriangle className={`w-5 h-5 ${danger ? 'text-red-600' : 'text-amber-600'}`} />
+          </div>
+          <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+        </div>
+        <p className="text-slate-600 text-sm mb-6 leading-relaxed">{message}</p>
+        <div className="flex gap-3 justify-end">
+          <button onClick={onCancel}
+            className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function FeedPage() {
   const [reports, setReports] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
@@ -13,6 +49,17 @@ export default function FeedPage() {
   const [activeTab, setActiveTab] = useState<'posts' | 'reports'>('posts');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Confirm dialog state
+  const [dialog, setDialog] = useState<{
+    open: boolean; title: string; message: string;
+    confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  }>({ open: false, title: '', message: '', confirmLabel: '', onConfirm: () => {} });
+
+  const showConfirm = (opts: Omit<typeof dialog, 'open'>) =>
+    setDialog({ ...opts, open: true });
+  const closeDialog = () => setDialog(d => ({ ...d, open: false }));
+
+  // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -20,58 +67,50 @@ export default function FeedPage() {
         getDocs(collection(db, 'reported_posts')),
         getDocs(collection(db, 'discussions')),
       ]);
-      
+
       const rawReports = reportsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
       const userIds = new Set<string>();
       rawReports.forEach((r: any) => {
-         if (r.postAuthorId) userIds.add(r.postAuthorId);
-         if (r.reportedByUserId) userIds.add(r.reportedByUserId);
+        if (r.postAuthorId) userIds.add(r.postAuthorId);
+        if (r.reportedByUserId) userIds.add(r.reportedByUserId);
       });
 
       const usersMap = new Map();
       await Promise.all(Array.from(userIds).map(async (uid) => {
-         try {
-           const userSnap = await getDoc(doc(db, 'users', uid));
-           if (userSnap.exists()) {
-             usersMap.set(uid, { id: userSnap.id, ...userSnap.data() });
-           }
-         } catch (e) {
-           console.error('Failed to fetch user:', uid);
-         }
+        try {
+          const userSnap = await getDoc(doc(db, 'users', uid));
+          if (userSnap.exists()) usersMap.set(uid, { id: userSnap.id, ...userSnap.data() });
+        } catch { console.error('Failed to fetch user:', uid); }
       }));
+
       const pendingGroupsMap = new Map();
-      
       rawReports.filter((r: any) => r.status === 'pending').forEach((r: any) => {
         if (!pendingGroupsMap.has(r.postId)) {
-           pendingGroupsMap.set(r.postId, {
-              postId: r.postId,
-              postContent: r.postContent,
-              postAuthorId: r.postAuthorId,
-              postAuthor: usersMap.get(r.postAuthorId) || {},
-              reportIds: [],
-              reporters: []
-           });
+          pendingGroupsMap.set(r.postId, {
+            postId: r.postId,
+            postContent: r.postContent,
+            postAuthorId: r.postAuthorId,
+            postAuthor: usersMap.get(r.postAuthorId) || {},
+            reportIds: [],
+            reporters: [],
+          });
         }
         const group = pendingGroupsMap.get(r.postId);
         group.reportIds.push(r.id);
         const reporterUser = usersMap.get(r.reportedByUserId) || {};
         group.reporters.push({
-           reportId: r.id,
-           userId: r.reportedByUserId,
-           reason: r.reason,
-           name: reporterUser.name || 'Unknown',
-           email: reporterUser.email || 'No email',
+          reportId: r.id,
+          userId: r.reportedByUserId,
+          reason: r.reason,
+          name: reporterUser.name || 'Unknown',
+          email: reporterUser.email || 'No email',
         });
       });
       setReports(Array.from(pendingGroupsMap.values()));
-      
+
       let postsData = postsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      postsData.sort((a: any, b: any) => {
-        const timeA = a.createdAt?.seconds || 0;
-        const timeB = b.createdAt?.seconds || 0;
-        return timeB - timeA;
-      });
+      postsData.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setPosts(postsData);
     } catch (error) { console.error(error); }
     finally { setLoading(false); }
@@ -79,6 +118,7 @@ export default function FeedPage() {
 
   useEffect(() => { fetchData(); }, []);
 
+  // ── Actions ────────────────────────────────────────────────────────────────
   const handleDismissAll = async (reportIds: string[]) => {
     try {
       await Promise.all(reportIds.map(id => updateDoc(doc(db, 'reported_posts', id), { status: 'dismissed' })));
@@ -87,24 +127,121 @@ export default function FeedPage() {
   };
 
   const handleDeletePost = async (postId: string, reportIds?: string[]) => {
-    if (!confirm('Delete this post permanently?')) return;
-    try {
-      await deleteDoc(doc(db, 'discussions', postId));
-      if (reportIds && reportIds.length > 0) {
-        await Promise.all(reportIds.map(id => updateDoc(doc(db, 'reported_posts', id), { status: 'deleted_post' })));
-      }
-      fetchData();
-    } catch { alert('Failed to delete'); }
+    showConfirm({
+      title: 'Delete Post',
+      message: 'This will permanently delete the post. This action cannot be undone.',
+      confirmLabel: 'Delete Post',
+      danger: true,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await deleteDoc(doc(db, 'discussions', postId));
+          if (reportIds?.length) {
+            await Promise.all(reportIds.map(id =>
+              updateDoc(doc(db, 'reported_posts', id), { status: 'deleted_post' })
+            ));
+          }
+          fetchData();
+        } catch { alert('Failed to delete post'); }
+      },
+    });
   };
 
-  const pendingReports = reports; // Already filtered and grouped
-  const filteredPosts = posts.filter(p => 
+  /**
+   * Ban a user — sets banned:true on their user doc.
+   * They can still sign in but your app should check this flag and block access.
+   */
+  const handleBanUser = async (userId: string, userName: string) => {
+    if (!userId) { alert('No user ID found for this post.'); return; }
+    showConfirm({
+      title: 'Ban User',
+      message: `Ban "${userName}"? Their account will be flagged as banned. They will not be able to use the app. You can unban them later from Firestore.`,
+      confirmLabel: 'Ban User',
+      danger: false,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await updateDoc(doc(db, 'users', userId), {
+            banned: true,
+            bannedAt: new Date().toISOString(),
+          });
+          alert(`${userName} has been banned.`);
+          fetchData();
+        } catch { alert('Failed to ban user'); }
+      },
+    });
+  };
+
+  /**
+   * Delete Account — nukes everything:
+   *  • users/{uid}
+   *  • All discussions where authorId == uid
+   *  • All reported_posts where postAuthorId == uid OR reportedByUserId == uid
+   *
+   * Note: Firebase Auth account deletion requires the Admin SDK (server-side).
+   * This deletes all Firestore data. The user can re-register freely.
+   * To also delete the Auth record, call a Cloud Function / API route from here.
+   */
+  const handleDeleteAccount = async (userId: string, userName: string) => {
+    if (!userId) { alert('No user ID found for this post.'); return; }
+
+    showConfirm({
+      title: 'Delete Entire Account',
+      message: `⚠️ This will permanently delete "${userName}"'s account and ALL their data — posts, reports, everything. They will be able to re-register with the same email if they want. This cannot be undone.`,
+      confirmLabel: 'Yes, Delete Everything',
+      danger: true,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          const batch = writeBatch(db);
+
+          // 1. Delete user doc
+          batch.delete(doc(db, 'users', userId));
+
+          // 2. Delete all their posts (discussions)
+          const postsSnap = await getDocs(
+            query(collection(db, 'discussions'), where('authorId', '==', userId))
+          );
+          postsSnap.docs.forEach(d => batch.delete(d.ref));
+
+          // 3. Delete all reports authored by them or about their posts
+          const reportsByAuthorSnap = await getDocs(
+            query(collection(db, 'reported_posts'), where('postAuthorId', '==', userId))
+          );
+          reportsByAuthorSnap.docs.forEach(d => batch.delete(d.ref));
+
+          const reportsByUserSnap = await getDocs(
+            query(collection(db, 'reported_posts'), where('reportedByUserId', '==', userId))
+          );
+          reportsByUserSnap.docs.forEach(d => batch.delete(d.ref));
+
+          await batch.commit();
+
+          alert(`Account and all data for "${userName}" has been deleted.`);
+          fetchData();
+        } catch (err) {
+          console.error(err);
+          alert('Failed to delete account. Check console for details.');
+        }
+      },
+    });
+  };
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const pendingReports = reports;
+  const filteredPosts = posts.filter(p =>
     (p.authorName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (p.content || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <ProtectedRoute>
+      <ConfirmDialog
+        {...dialog}
+        onCancel={closeDialog}
+      />
+
       <div className="max-w-5xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-3">
@@ -116,18 +253,16 @@ export default function FeedPage() {
               <p className="text-sm text-slate-500">Manage community posts and reports</p>
             </div>
           </div>
-          
+
           <div className="flex p-1 bg-slate-100 rounded-xl">
-            <button 
+            <button
               onClick={() => setActiveTab('posts')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'posts' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-600 hover:bg-slate-200/50'}`}
-            >
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'posts' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-600 hover:bg-slate-200/50'}`}>
               All Posts ({posts.length})
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('reports')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-red-600' : 'text-slate-600 hover:bg-slate-200/50'}`}
-            >
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-red-600' : 'text-slate-600 hover:bg-slate-200/50'}`}>
               Pending Reports ({pendingReports.length})
             </button>
           </div>
@@ -148,9 +283,11 @@ export default function FeedPage() {
 
         <div className="space-y-4">
           {loading ? (
-            <div className="text-center py-10"><div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: '#FF4D6D' }} /></div>
+            <div className="text-center py-10">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: '#FF4D6D' }} />
+            </div>
           ) : activeTab === 'reports' ? (
-            // REPORTS TAB
+            // ── REPORTS TAB ──────────────────────────────────────────────────
             pendingReports.length === 0 ? (
               <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
                 <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
@@ -166,15 +303,23 @@ export default function FeedPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">Reported {reportGroup.reporters.length} times</span>
-                        <span className="text-sm text-slate-500">Poster: <span className="font-medium text-slate-700">{reportGroup.postAuthor.name || 'Unknown'} ({reportGroup.postAuthor.email || 'No email'})</span></span>
+                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                          Reported {reportGroup.reporters.length} times
+                        </span>
+                        <span className="text-sm text-slate-500">
+                          Poster: <span className="font-medium text-slate-700">
+                            {reportGroup.postAuthor.name || 'Unknown'} ({reportGroup.postAuthor.email || 'No email'})
+                          </span>
+                        </span>
                       </div>
                       <div className="bg-slate-50 rounded-xl p-4 text-slate-700 text-sm border border-slate-100 mb-4">
                         {reportGroup.postContent || 'No text content'}
                       </div>
-                      
+
                       <div className="space-y-2">
-                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Reporters ({reportGroup.reporters.length})</h4>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                          Reporters ({reportGroup.reporters.length})
+                        </h4>
                         {reportGroup.reporters.map((reporter: any, idx: number) => (
                           <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 text-sm p-2 bg-slate-50 rounded-lg">
                             <span className="font-medium text-slate-700">{reporter.name}</span>
@@ -186,10 +331,19 @@ export default function FeedPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-3 mt-4 ml-14">
+
+                  <div className="flex flex-wrap gap-3 mt-4 ml-14">
                     <button onClick={() => handleDeletePost(reportGroup.postId, reportGroup.reportIds)}
                       className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md" style={{ background: 'linear-gradient(135deg, #EF4444, #DC2626)' }}>
                       <Trash2 className="w-4 h-4 inline mr-2" />Delete Post
+                    </button>
+                    <button onClick={() => handleBanUser(reportGroup.postAuthorId, reportGroup.postAuthor.name || 'User')}
+                      className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md bg-amber-500 hover:bg-amber-600">
+                      <Ban className="w-4 h-4 inline mr-2" />Ban User
+                    </button>
+                    <button onClick={() => handleDeleteAccount(reportGroup.postAuthorId, reportGroup.postAuthor.name || 'User')}
+                      className="px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all hover:shadow-md" style={{ background: 'linear-gradient(135deg, #7C3AED, #6D28D9)' }}>
+                      <UserX className="w-4 h-4 inline mr-2" />Delete Account
                     </button>
                     <button onClick={() => handleDismissAll(reportGroup.reportIds)}
                       className="px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl text-sm font-semibold transition-colors">
@@ -200,7 +354,7 @@ export default function FeedPage() {
               ))
             )
           ) : (
-            // ALL POSTS TAB
+            // ── ALL POSTS TAB ────────────────────────────────────────────────
             filteredPosts.length === 0 ? (
               <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
                 <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -225,7 +379,7 @@ export default function FeedPage() {
                           <span className="text-xs text-slate-500">• {post.authorCollege || 'CampusEra'}</span>
                         </div>
                         <p className="text-slate-700 mt-2 text-sm whitespace-pre-wrap">{post.content}</p>
-                        
+
                         {post.imageUrls && post.imageUrls.length > 0 && (
                           <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
                             {post.imageUrls.map((url: string, idx: number) => (
@@ -233,7 +387,7 @@ export default function FeedPage() {
                             ))}
                           </div>
                         )}
-                        
+
                         <div className="flex items-center gap-4 mt-4 text-xs font-medium text-slate-500">
                           <span>❤️ {post.likesCount || 0}</span>
                           <span>💬 {post.commentsCount || 0}</span>
@@ -241,10 +395,22 @@ export default function FeedPage() {
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => handleDeletePost(post.id)}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0" title="Delete Post">
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+
+                    {/* Action buttons for each post */}
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <button onClick={() => handleDeletePost(post.id)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete Post">
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                      <button onClick={() => handleBanUser(post.authorId, post.authorName || 'User')}
+                        className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors" title="Ban User">
+                        <Ban className="w-5 h-5" />
+                      </button>
+                      <button onClick={() => handleDeleteAccount(post.authorId, post.authorName || 'User')}
+                        className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" title="Delete Account & All Data">
+                        <UserX className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))
