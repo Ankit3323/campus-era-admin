@@ -6,7 +6,7 @@ import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc, addDoc } from '
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X } from 'lucide-react';
+import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X, CheckCircle, XCircle } from 'lucide-react';
 
 interface User {
   id: string;
@@ -15,6 +15,7 @@ interface User {
   phone?: string;
   role?: string;
   blocked?: boolean;
+  isVerifiedOwner?: boolean;
 }
 
 export default function UsersPage() {
@@ -51,6 +52,16 @@ export default function UsersPage() {
       }
       fetchUsers();
     } catch { alert('Failed to update'); }
+  };
+
+  const handleToggleVerification = async (userId: string, currentStatus: boolean) => {
+    if (!confirm(`Are you sure you want to ${currentStatus ? 'revoke verification for' : 'verify'} this owner?`)) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), { isVerifiedOwner: !currentStatus });
+      fetchUsers();
+    } catch {
+      alert('Failed to update verification status');
+    }
   };
 
   const handleBanUser = async (user: User) => {
@@ -99,24 +110,14 @@ export default function UsersPage() {
         ownerType: newOwnerData.type,
         isPremium: true,
         profileCompleted: false,
+        isVerifiedOwner: true,
         createdat: new Date().toISOString()
       });
       
-      // 4. Create the subscription doc in Firestore
-      await addDoc(collection(db, 'subscriptions'), {
-        ownerId: newUserId,
-        planName: 'premium',
-        status: 'active',
-        paymentMethod: 'admin_granted',
-        startDate: new Date().toISOString(),
-        endDate: new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000).toISOString(), // 10 years
-        amount: 0.0
-      });
-      
-      // 5. Cleanup auth
+      // 4. Cleanup auth
       await signOut(adminAuth);
       
-      // 6. Success
+      // 5. Success
       alert('Owner account created successfully!');
       setShowAddOwnerModal(false);
       setNewOwnerData({ name: '', email: '', password: '', type: 'pg_owner' });
@@ -213,8 +214,21 @@ export default function UsersPage() {
                           <Unlock className="w-3 h-3" /> Active
                         </span>
                       )}
+                      {u.role === 'owner' && (
+                        <span className={`ml-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${u.isVerifiedOwner ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {u.isVerifiedOwner ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                          {u.isVerifiedOwner ? 'Verified' : 'Pending'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-right space-x-2">
+                      {u.role === 'owner' && (
+                        <button onClick={() => handleToggleVerification(u.id, u.isVerifiedOwner || false)}
+                          className={`p-2 rounded-lg transition-colors ${u.isVerifiedOwner ? 'text-blue-600 hover:bg-blue-50' : 'text-slate-400 hover:bg-slate-50'}`}
+                          title={u.isVerifiedOwner ? 'Revoke Verification' : 'Verify Owner'}>
+                          {u.isVerifiedOwner ? <CheckCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                        </button>
+                      )}
                       <button onClick={() => handleToggleBlock(u.id, u.blocked || false, u.email)}
                         className={`p-2 rounded-lg transition-colors ${u.blocked ? 'text-emerald-600 hover:bg-emerald-50' : 'text-amber-600 hover:bg-amber-50'}`}
                         title={u.blocked ? 'Unblock' : 'Block'}>
