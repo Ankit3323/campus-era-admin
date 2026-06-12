@@ -162,6 +162,7 @@ export default function FeedPage() {
         closeDialog();
         try {
           await updateDoc(doc(db, 'users', userId), {
+            blocked: true,
             banned: true,
             bannedAt: new Date().toISOString(),
           });
