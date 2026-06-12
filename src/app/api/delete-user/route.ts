@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
-import * as admin from 'firebase-admin';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 
 // Initialize Firebase Admin if it hasn't been initialized yet
-if (!admin.apps.length) {
+if (!getApps().length) {
   try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    initializeApp({
+      credential: cert({
+        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '',
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',
       }),
     });
   } catch (error) {
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
     }
 
     // Attempt to delete the user from Firebase Authentication
-    await admin.auth().deleteUser(uid);
+    await getAuth().deleteUser(uid);
     console.log(`✅ Successfully deleted Auth user: ${uid}`);
 
     return NextResponse.json({ success: true, message: `Successfully deleted user ${uid}` });
