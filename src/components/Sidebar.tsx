@@ -13,12 +13,14 @@ import {
   ShieldCheck,
   ShoppingBag,
   SearchCode,
+  UserX,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Users', href: '/users', icon: Users },
+  { name: 'Banned Users', href: '/banned-users', icon: UserX },
   { name: 'Feed & Reports', href: '/feed', icon: AlertTriangle },
   { name: 'Market Items', href: '/market', icon: ShoppingBag },
   { name: 'PG Listings', href: '/pg', icon: Building2 },
