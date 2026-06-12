@@ -169,6 +169,20 @@ export default function UsersPage() {
       onConfirm: async () => {
         closeDialog();
         try {
+          // 0. Delete the user from Firebase Authentication via our secure API route
+          const authDeleteRes = await fetch('/api/delete-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid: user.id }),
+          });
+          const authDeleteData = await authDeleteRes.json();
+          if (!authDeleteRes.ok) {
+            console.warn("Failed to delete Auth account:", authDeleteData.error);
+            // Optionally, we could halt here, but we proceed to delete Firestore data anyway
+            // to ensure no dangling data remains if Auth delete failed for some reason.
+            alert("Warning: Could not delete Auth record. Error: " + authDeleteData.error);
+          }
+
           const batch = writeBatch(db);
 
           // 1. Delete user doc
