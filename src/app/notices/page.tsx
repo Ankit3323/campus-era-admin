@@ -15,6 +15,7 @@ export default function NoticesPage() {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [sound, setSound] = useState('default');
   const [submitting, setSubmitting] = useState(false);
 
   const fetchNotices = async () => {
@@ -65,7 +66,11 @@ export default function NoticesPage() {
             title: "📢 " + title.trim(),
             body: message.trim(),
             senderId: user?.uid || 'admin',
-            type: 'notice'
+            type: 'notice',
+            // Include the notice image so it shows in the push notification.
+            imageUrl: imageUrl.trim() || '',
+            // Which bundled notification sound to play (default = normal sound).
+            sound: sound || 'default'
           })
         });
         const data = await res.json();
@@ -74,7 +79,7 @@ export default function NoticesPage() {
         console.error('Notification error:', err);
       }
 
-      setTitle(''); setMessage(''); setImageUrl(''); setShowForm(false);
+      setTitle(''); setMessage(''); setImageUrl(''); setSound('default'); setShowForm(false);
       fetchNotices();
     } catch (error) { alert('Failed to create notice'); console.error(error); }
     finally { setSubmitting(false); }
@@ -124,6 +129,20 @@ export default function NoticesPage() {
               <input type="url" value={imageUrl} onChange={e => setImageUrl(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 text-sm"
                 placeholder="https://..." />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Notification sound</label>
+              <select value={sound} onChange={e => setSound(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 text-sm">
+                <option value="default">Default</option>
+                <option value="chinese_notification">Chinese Notification</option>
+                <option value="depression_meme">Depression Meme 😔</option>
+                <option value="emotional_damage">Emotional Damage 💀</option>
+                <option value="onicha">OniCha</option>
+                <option value="tuchki_tuiya">Tuchki Tuiya</option>
+                <option value="uff">Uff</option>
+                <option value="ye_kya_sun_raha">Ye Kya Sun Raha Hu Mai 🎧</option>
+              </select>
             </div>
             <button type="submit" disabled={submitting}
               className="px-6 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-70" style={{ background: 'linear-gradient(135deg, #8B5CF6, #6D28D9)' }}>
