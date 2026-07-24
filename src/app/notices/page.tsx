@@ -50,20 +50,29 @@ export default function NoticesPage() {
         updatedAt: Timestamp.now(),
       });
       
-      // Broadcast to all users via new Render API endpoint
-      fetch('https://campusera-notification-server.onrender.com/sendBroadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: "📢 " + title.trim(),
-          body: message.trim(),
-          senderId: user?.uid || 'admin',
-          type: 'notice'
-        })
-      })
-      .then(res => res.json())
-      .then(data => console.log('Broadcast response:', data))
-      .catch(err => console.error('Notification error:', err));
+      // Broadcast to all users via the Render API. The server now requires a
+      // verified admin Firebase ID token (the old no-auth path was a spam hole),
+      // so send the current admin's token.
+      try {
+        const token = user ? await user.getIdToken() : '';
+        const res = await fetch('https://campusera-notification-server.onrender.com/sendBroadcast', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            title: "📢 " + title.trim(),
+            body: message.trim(),
+            senderId: user?.uid || 'admin',
+            type: 'notice'
+          })
+        });
+        const data = await res.json();
+        console.log('Broadcast response:', data);
+      } catch (err) {
+        console.error('Notification error:', err);
+      }
 
       setTitle(''); setMessage(''); setImageUrl(''); setShowForm(false);
       fetchNotices();
