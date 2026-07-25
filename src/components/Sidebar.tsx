@@ -35,7 +35,7 @@ export default function Sidebar() {
 
   const navItems = isSuperAdmin 
     ? [...navigation, { name: 'Manage Admins', href: '/admins', icon: ShieldCheck }]
-    : navigation;
+    : navigation.filter(item => !['Users', 'Market Items', 'PG Listings', 'Mess Services'].includes(item.name));
 
   return (
     <div className="flex h-full w-64 flex-col gradient-sidebar">
