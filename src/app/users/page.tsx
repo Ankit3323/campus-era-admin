@@ -192,18 +192,28 @@ export default function UsersPage() {
       onConfirm: async () => {
         closeDialog();
         try {
-          // 0. Delete the user from Firebase Authentication via our secure API route
-          const authDeleteRes = await fetch('/api/delete-user', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: user.id }),
-          });
-          const authDeleteData = await authDeleteRes.json();
-          if (!authDeleteRes.ok) {
-            console.warn("Failed to delete Auth account:", authDeleteData.error);
-            // Optionally, we could halt here, but we proceed to delete Firestore data anyway
-            // to ensure no dangling data remains if Auth delete failed for some reason.
-            alert("Warning: Could not delete Auth record. Error: " + authDeleteData.error);
+          // 0. Delete the user from Firebase Authentication via our secure API
+          // route. This is isolated so a broken/misconfigured route (e.g. missing
+          // Admin SDK env vars on Vercel) never aborts the Firestore cleanup.
+          let authDeleted = false;
+          let authError = '';
+          try {
+            const authDeleteRes = await fetch('/api/delete-user', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ uid: user.id }),
+            });
+            let authDeleteData: any = {};
+            try { authDeleteData = await authDeleteRes.json(); } catch { /* non-JSON error page */ }
+            if (authDeleteRes.ok) {
+              authDeleted = true;
+            } else {
+              authError = authDeleteData?.error || `HTTP ${authDeleteRes.status}`;
+              console.warn('Auth delete failed:', authError);
+            }
+          } catch (e: any) {
+            authError = e?.message || 'request failed';
+            console.warn('Auth delete request error:', e);
           }
 
           const batch = writeBatch(db);
@@ -236,11 +246,21 @@ export default function UsersPage() {
 
           await batch.commit();
 
-          alert(`Account and all data for "${user.name}" has been deleted.`);
+          if (authDeleted) {
+            alert(`Account and all data for "${user.name}" has been deleted.`);
+          } else {
+            alert(
+              `Deleted "${user.name}"'s data (posts, reports, profile), but the ` +
+              `LOGIN account could not be removed — the delete-user API isn't ` +
+              `configured.\n\nReason: ${authError}\n\nFix: set FIREBASE_CLIENT_EMAIL, ` +
+              `FIREBASE_PRIVATE_KEY and NEXT_PUBLIC_FIREBASE_PROJECT_ID in Vercel, ` +
+              `then redeploy. (Ban the account meanwhile to lock it out.)`
+            );
+          }
           fetchUsers();
-        } catch (err) {
+        } catch (err: any) {
           console.error(err);
-          alert('Failed to delete account. Check console for details.');
+          alert('Failed to delete account: ' + (err?.message || err));
         }
       },
     });
