@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { initializeApp, cert, getApps, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
+// firebase-admin needs Node APIs — must NOT run on the Edge runtime, or the
+// function crashes with a bare 500. Force Node and disable static analysis.
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * Normalize the private key from an env var. Handles the two most common Vercel
  * pitfalls: the value being wrapped in quotes, and newlines stored as literal
