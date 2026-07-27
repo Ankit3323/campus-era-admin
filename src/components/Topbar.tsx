@@ -1,17 +1,27 @@
 "use client";
 
 import { useAuth } from '@/context/AuthContext';
-import { Bell } from 'lucide-react';
+import { Bell, Menu } from 'lucide-react';
 
-export default function Topbar() {
+export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
   const { user } = useAuth();
 
   return (
-    <div className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 border-b border-slate-200 bg-white/80 backdrop-blur-xl px-4 sm:gap-x-6 sm:px-6 lg:px-8">
+    <div className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-3 border-b border-slate-200 bg-white/80 backdrop-blur-xl px-4 sm:gap-x-6 sm:px-6 lg:px-8">
+      {/* Hamburger — only on phones/tablets */}
+      <button
+        type="button"
+        onClick={onMenuClick}
+        className="lg:hidden -ml-1 p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-6 w-6" />
+      </button>
+
       <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
         {/* Page Title Area */}
         <div className="flex flex-1 items-center">
-          <h2 className="text-lg font-semibold text-slate-800">Admin Dashboard</h2>
+          <h2 className="text-base sm:text-lg font-semibold text-slate-800">Admin Dashboard</h2>
         </div>
 
         <div className="flex items-center gap-x-4 lg:gap-x-6">

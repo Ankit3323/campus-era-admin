@@ -29,7 +29,7 @@ const navigation = [
   { name: 'Notices', href: '/notices', icon: Megaphone },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { handleLogout, isSuperAdmin } = useAuth();
 
@@ -61,6 +61,7 @@ export default function Sidebar() {
                   <li key={item.name}>
                     <Link
                       href={item.href}
+                      onClick={onNavigate}
                       className={`
                         group flex gap-x-3 rounded-xl px-3 py-2.5 text-sm leading-6 font-medium transition-all duration-200
                         ${isActive
@@ -85,7 +86,7 @@ export default function Sidebar() {
           </li>
           <li className="mt-auto">
             <button
-              onClick={handleLogout}
+              onClick={() => { onNavigate?.(); handleLogout(); }}
               className="group -mx-2 flex w-full gap-x-3 rounded-xl px-3 py-2.5 text-sm font-medium leading-6 text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-all duration-200"
             >
               <LogOut className="h-5 w-5 shrink-0 text-slate-500 group-hover:text-red-400" aria-hidden="true" />

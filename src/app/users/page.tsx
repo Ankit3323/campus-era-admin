@@ -16,7 +16,10 @@ interface User {
   role?: string;
   blocked?: boolean;
   isVerifiedOwner?: boolean;
+  ownerType?: string;
 }
+
+type UserTab = 'students' | 'owners' | 'unverified';
 
 // ── Confirm Dialog ─────────────────────────────────────────────────────────────
 function ConfirmDialog({
@@ -58,6 +61,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<UserTab>('students');
 
   // Add Owner State
   const [showAddOwnerModal, setShowAddOwnerModal] = useState(false);
@@ -264,10 +268,26 @@ export default function UsersPage() {
     }
   };
 
-  const filteredUsers = users.filter(u =>
+  const matchesSearch = (u: User) =>
     (u.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+  // Split into separate groups so students and owners aren't managed together.
+  const owners = users.filter(u => u.role === 'owner');
+  const students = users.filter(u => u.role !== 'owner');
+  const unverifiedOwners = owners.filter(u => !u.isVerifiedOwner);
+
+  const tabList =
+    activeTab === 'owners' ? owners
+    : activeTab === 'unverified' ? unverifiedOwners
+    : students;
+  const filteredUsers = tabList.filter(matchesSearch);
+
+  const tabs: { key: UserTab; label: string; count: number }[] = [
+    { key: 'students', label: 'Students', count: students.length },
+    { key: 'owners', label: 'Owners', count: owners.length },
+    { key: 'unverified', label: 'Unverified PG / Mess', count: unverifiedOwners.length },
+  ];
 
   const getRoleBadge = (role?: string) => {
     switch (role) {
@@ -282,12 +302,12 @@ export default function UsersPage() {
       <ConfirmDialog {...dialog} onCancel={closeDialog} />
 
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-8">
           <div className="flex items-center gap-3">
             <Users className="w-6 h-6 text-blue-600" />
-            <h1 className="text-2xl font-bold text-slate-900">Manage Users</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Manage Users</h1>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setShowAddOwnerModal(true)}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors shadow-sm"
@@ -295,7 +315,7 @@ export default function UsersPage() {
               <Plus className="w-4 h-4" />
               Add Owner
             </button>
-            <span className="bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">
+            <span className="bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap">
               {filteredUsers.length} users
             </span>
           </div>
@@ -311,6 +331,32 @@ export default function UsersPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-12 pr-4 py-3 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
           />
+        </div>
+
+        {/* Tabs — students, owners, and owners still needing verification */}
+        <div className="mb-6 flex flex-wrap gap-2">
+          {tabs.map(t => {
+            const active = activeTab === t.key;
+            const isUnverified = t.key === 'unverified';
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2 ${
+                  active
+                    ? (isUnverified ? 'bg-amber-500 text-white shadow-sm' : 'bg-blue-600 text-white shadow-sm')
+                    : `bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 ${isUnverified && t.count > 0 ? 'ring-1 ring-amber-300' : ''}`
+                }`}
+              >
+                {t.label}
+                <span className={`px-2 py-0.5 rounded-full text-xs ${
+                  active ? 'bg-white/20 text-white'
+                  : isUnverified && t.count > 0 ? 'bg-amber-100 text-amber-700'
+                  : 'bg-slate-100 text-slate-600'
+                }`}>{t.count}</span>
+              </button>
+            );
+          })}
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -329,12 +375,23 @@ export default function UsersPage() {
                   <tr><td colSpan={4} className="px-6 py-8 text-center">
                     <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600" />
                   </td></tr>
+                ) : filteredUsers.length === 0 ? (
+                  <tr><td colSpan={4} className="px-6 py-10 text-center text-slate-500 text-sm">
+                    {activeTab === 'unverified'
+                      ? 'No PG / Mess owners pending verification 🎉'
+                      : `No ${activeTab} found.`}
+                  </td></tr>
                 ) : filteredUsers.map((u) => (
                   <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="font-medium text-slate-900">{u.name || 'Unknown'}</div>
                       <div className="text-slate-500 text-xs">{u.email || 'No email'}</div>
                       {u.phone && <div className="text-xs text-slate-400">{u.phone}</div>}
+                      {u.role === 'owner' && u.ownerType && (
+                        <div className="mt-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                          {u.ownerType.replace('_owner', '')} owner
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span className="px-3 py-1 rounded-full text-xs font-semibold capitalize text-white" style={{ background: getRoleBadge(u.role).bg }}>
