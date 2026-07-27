@@ -6,7 +6,7 @@ import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc, query, where, w
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X, CheckCircle, XCircle, UserX, AlertTriangle } from 'lucide-react';
+import { Ban, Trash2, Unlock, ShieldAlert, Search, Users, Plus, X, CheckCircle, XCircle, UserX, AlertTriangle, Layers } from 'lucide-react';
 
 interface User {
   id: string;
@@ -17,6 +17,7 @@ interface User {
   blocked?: boolean;
   isVerifiedOwner?: boolean;
   ownerType?: string;
+  canListBoth?: boolean;
 }
 
 type UserTab = 'students' | 'owners' | 'unverified';
@@ -127,6 +128,24 @@ export default function UsersPage() {
           await updateDoc(doc(db, 'users', userId), { isVerifiedOwner: !currentStatus });
           fetchUsers();
         } catch { alert('Failed to update verification status'); }
+      },
+    });
+  };
+
+  const handleToggleListBoth = async (userId: string, currentStatus: boolean) => {
+    showConfirm({
+      title: currentStatus ? 'Remove "List Both" access' : 'Allow listing both PG & Mess',
+      message: currentStatus
+        ? 'This owner will go back to listing only their own type (PG or Mess).'
+        : 'This owner will be able to list BOTH PG and Mess services.',
+      confirmLabel: currentStatus ? 'Remove' : 'Allow Both',
+      danger: currentStatus,
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await updateDoc(doc(db, 'users', userId), { canListBoth: !currentStatus });
+          fetchUsers();
+        } catch { alert('Failed to update listing permission'); }
       },
     });
   };
@@ -414,6 +433,11 @@ export default function UsersPage() {
                           {u.isVerifiedOwner ? 'Verified' : 'Pending'}
                         </span>
                       )}
+                      {u.role === 'owner' && u.canListBoth && (
+                        <span className="ml-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium">
+                          <Layers className="w-3 h-3" /> PG + Mess
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-right space-x-1">
                       {/* Verify (owners only) */}
@@ -422,6 +446,14 @@ export default function UsersPage() {
                           className={`p-2 rounded-lg transition-colors ${u.isVerifiedOwner ? 'text-blue-600 hover:bg-blue-50' : 'text-slate-400 hover:bg-slate-50'}`}
                           title={u.isVerifiedOwner ? 'Revoke Verification' : 'Verify Owner'}>
                           <CheckCircle className="w-5 h-5" />
+                        </button>
+                      )}
+                      {/* Allow listing BOTH PG & Mess (owners only) */}
+                      {u.role === 'owner' && (
+                        <button onClick={() => handleToggleListBoth(u.id, u.canListBoth || false)}
+                          className={`p-2 rounded-lg transition-colors ${u.canListBoth ? 'text-violet-600 hover:bg-violet-50' : 'text-slate-400 hover:bg-slate-50'}`}
+                          title={u.canListBoth ? 'Remove "list both" access' : 'Allow listing both PG & Mess'}>
+                          <Layers className="w-5 h-5" />
                         </button>
                       )}
                       {/* Block / Unblock */}
