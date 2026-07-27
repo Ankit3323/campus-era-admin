@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server';
-import { initializeApp, cert, getApps, type App } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 
-// firebase-admin needs Node APIs — must NOT run on the Edge runtime, or the
-// function crashes with a bare 500. Force Node and disable static analysis.
+// firebase-admin needs the Node runtime (crashes on Edge).
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/**
- * Normalize the private key from an env var. Handles the two most common Vercel
- * pitfalls: the value being wrapped in quotes, and newlines stored as literal
- * "\n" instead of real line breaks.
- */
+/** Fix the two common Vercel private-key pitfalls: wrapping quotes + literal \n. */
 function normalizePrivateKey(raw?: string): string {
   let key = (raw ?? '').trim();
   if (
@@ -23,10 +16,14 @@ function normalizePrivateKey(raw?: string): string {
   return key.replace(/\\n/g, '\n');
 }
 
-/** Lazily init the Admin app so credential errors surface as a clear response. */
-function getAdminApp(): App {
-  const existing = getApps();
-  if (existing.length) return existing[0];
+/**
+ * Load + init firebase-admin. Uses DYNAMIC imports so a bundling/load failure is
+ * catchable here and returned as a readable error — instead of crashing the
+ * whole route module at import time (which shows up as a bare HTTP 500).
+ */
+async function getAuthAdmin() {
+  const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+  const { getAuth } = await import('firebase-admin/auth');
 
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -36,41 +33,53 @@ function getAdminApp(): App {
   if (!projectId) missing.push('NEXT_PUBLIC_FIREBASE_PROJECT_ID');
   if (!clientEmail) missing.push('FIREBASE_CLIENT_EMAIL');
   if (!privateKey) missing.push('FIREBASE_PRIVATE_KEY');
-  if (missing.length) {
-    throw new Error('Missing env vars: ' + missing.join(', '));
-  }
+  if (missing.length) throw new Error('Missing env vars: ' + missing.join(', '));
   if (!privateKey.includes('BEGIN PRIVATE KEY')) {
-    throw new Error(
-      'FIREBASE_PRIVATE_KEY is malformed (no PEM header found). Re-paste the ' +
-      'full private_key value from the service-account JSON.'
-    );
+    throw new Error('FIREBASE_PRIVATE_KEY is malformed (no PEM header found).');
   }
 
-  return initializeApp({
-    credential: cert({ projectId, clientEmail, privateKey }),
-  });
+  const app = getApps().length
+    ? getApps()[0]
+    : initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  return getAuth(app);
+}
+
+/** Diagnostic — open /api/delete-user in a browser to see exactly what's wrong. */
+export async function GET() {
+  try {
+    await getAuthAdmin();
+    return NextResponse.json({ ok: true, message: 'firebase-admin initialized OK' });
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: e?.message || String(e),
+        env: {
+          projectId: !!process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+          clientEmail: !!process.env.FIREBASE_CLIENT_EMAIL,
+          privateKeyPresent: !!process.env.FIREBASE_PRIVATE_KEY,
+          privateKeyHasHeader: (process.env.FIREBASE_PRIVATE_KEY || '').includes('BEGIN PRIVATE KEY'),
+        },
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
   try {
     const { uid } = await request.json();
-    if (!uid) {
-      return NextResponse.json({ error: 'Missing UID' }, { status: 400 });
-    }
+    if (!uid) return NextResponse.json({ error: 'Missing UID' }, { status: 400 });
 
-    const app = getAdminApp(); // throws a descriptive error if creds are bad
-    await getAuth(app).deleteUser(uid);
+    const auth = await getAuthAdmin();
+    await auth.deleteUser(uid);
     console.log(`✅ Deleted Auth user: ${uid}`);
     return NextResponse.json({ success: true, message: `Deleted ${uid}` });
   } catch (error: any) {
     console.error('❌ delete-user error:', error);
-    // Already gone in Auth → treat as success so Firestore cleanup proceeds.
     if (error?.code === 'auth/user-not-found') {
       return NextResponse.json({ success: true, message: 'User already deleted in Auth' });
     }
-    return NextResponse.json(
-      { error: error?.message || String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
   }
 }
