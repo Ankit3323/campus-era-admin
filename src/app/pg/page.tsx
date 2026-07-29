@@ -2,7 +2,7 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, deleteDoc, updateDoc, query, where, documentId } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { Building2, Trash2, Search, CheckCircle, XCircle, Clock } from 'lucide-react';
 
@@ -16,7 +16,21 @@ export default function PGPage() {
     setLoading(true);
     try {
       const snap = await getDocs(collection(db, 'rooms'));
-      setPgs(snap.docs.map(d => ({ id: d.id, status: 'approved', ...d.data() })));
+      const list = snap.docs.map(d => ({ id: d.id, status: 'approved', ...d.data() } as any));
+
+      // Resolve owner names from users (room docs only store ownerid). Batched.
+      const ownerIds = Array.from(new Set(list.map(p => p.ownerid).filter(Boolean)));
+      const nameById: Record<string, string> = {};
+      for (let i = 0; i < ownerIds.length; i += 10) {
+        const chunk = ownerIds.slice(i, i + 10);
+        try {
+          const usnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk)));
+          usnap.docs.forEach(u => { nameById[u.id] = (u.data() as any).name || ''; });
+        } catch { /* ignore */ }
+      }
+      list.forEach(p => { p.ownerName = nameById[p.ownerid] || ''; });
+
+      setPgs(list);
     } catch (error) { console.error(error); }
     finally { setLoading(false); }
   };
@@ -103,7 +117,7 @@ export default function PGPage() {
                       <div className="font-medium text-slate-900">{pg.title || 'Untitled'}</div>
                       <div className="text-slate-500 text-xs">{pg.ownerName || 'Unknown Owner'}</div>
                     </td>
-                    <td className="px-6 py-4"><span className="font-semibold text-slate-800">₹{pg.rent || 0}</span></td>
+                    <td className="px-6 py-4"><span className="font-semibold text-slate-800">₹{Number(pg.price ?? pg.rent ?? 0)}</span></td>
                     <td className="px-6 py-4 text-slate-600">{pg.location || 'Not specified'}</td>
                     <td className="px-6 py-4">
                       {pg.status === 'pending' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-medium"><Clock className="w-3 h-3"/> Pending</span>}

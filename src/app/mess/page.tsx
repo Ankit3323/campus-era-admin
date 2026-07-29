@@ -2,7 +2,7 @@
 
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, deleteDoc, updateDoc, query, where, documentId } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { UtensilsCrossed, Trash2, Search, CheckCircle, XCircle, Clock } from 'lucide-react';
 
@@ -16,7 +16,22 @@ export default function MessPage() {
     setLoading(true);
     try {
       const snap = await getDocs(collection(db, 'mess'));
-      setMesses(snap.docs.map(d => ({ id: d.id, status: 'approved', ...d.data() })));
+      const list = snap.docs.map(d => ({ id: d.id, status: 'approved', ...d.data() } as any));
+
+      // Resolve owner names from the users collection (mess docs only store
+      // ownerid). Batched in chunks of 10 — scalable, one query per 10 owners.
+      const ownerIds = Array.from(new Set(list.map(m => m.ownerid).filter(Boolean)));
+      const nameById: Record<string, string> = {};
+      for (let i = 0; i < ownerIds.length; i += 10) {
+        const chunk = ownerIds.slice(i, i + 10);
+        try {
+          const usnap = await getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk)));
+          usnap.docs.forEach(u => { nameById[u.id] = (u.data() as any).name || ''; });
+        } catch { /* ignore lookup failures — falls back to "Unknown owner" */ }
+      }
+      list.forEach(m => { m.ownerName = nameById[m.ownerid] || ''; });
+
+      setMesses(list);
     } catch (error) { console.error(error); }
     finally { setLoading(false); }
   };
@@ -36,8 +51,8 @@ export default function MessPage() {
     } catch { alert('Failed to update status'); }
   };
 
-  const filteredMesses = messes.filter(m => 
-    (m.messName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+  const filteredMesses = messes.filter(m =>
+    (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (m.ownerName || '').toLowerCase().includes(searchQuery.toLowerCase())
   ).filter(m => statusFilter === 'all' || m.status === statusFilter);
 
@@ -100,10 +115,10 @@ export default function MessPage() {
                 ) : filteredMesses.map((mess) => (
                   <tr key={mess.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-slate-900">{mess.messName || 'Untitled'}</div>
-                      <div className="text-slate-500 text-xs">{mess.ownerName || 'Unknown'}</div>
+                      <div className="font-medium text-slate-900">{mess.name || 'Untitled'}</div>
+                      <div className="text-slate-500 text-xs">{mess.ownerName || 'Unknown owner'}</div>
                     </td>
-                    <td className="px-6 py-4"><span className="font-semibold text-slate-800">₹{mess.fee || 0}</span></td>
+                    <td className="px-6 py-4"><span className="font-semibold text-slate-800">₹{Number(mess.pricepermonth ?? mess.fee ?? 0)}</span></td>
                     <td className="px-6 py-4 text-slate-600">{mess.location || 'Not specified'}</td>
                     <td className="px-6 py-4">
                       {mess.status === 'pending' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-medium"><Clock className="w-3 h-3"/> Pending</span>}
