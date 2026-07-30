@@ -92,6 +92,15 @@ export async function POST(request: Request) {
     const BATCH = 500;
     for (let i = 0; i < recipients.length; i += BATCH) {
       const chunk = recipients.slice(i, i + BATCH);
+      // Standard transactional send (works on the free plan). One recipient per
+      // request is the normal case here; if a batch ever arrives, use
+      // messageVersions so nobody sees anyone else's address.
+      const payload: any = { sender: SENDER, subject, htmlContent: html };
+      if (chunk.length === 1) {
+        payload.to = [{ email: chunk[0] }];
+      } else {
+        payload.messageVersions = chunk.map((email) => ({ to: [{ email }] }));
+      }
       try {
         const res = await fetch('https://api.brevo.com/v3/smtp/email', {
           method: 'POST',
@@ -100,12 +109,7 @@ export async function POST(request: Request) {
             'content-type': 'application/json',
             accept: 'application/json',
           },
-          body: JSON.stringify({
-            sender: SENDER,
-            subject,
-            htmlContent: html,
-            messageVersions: chunk.map((email) => ({ to: [{ email }] })),
-          }),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
           sent += chunk.length;
