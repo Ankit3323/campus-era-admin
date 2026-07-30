@@ -42,6 +42,24 @@ export default function EmailPage() {
     })();
   }, []);
 
+  // Restore the last saved draft (subject + HTML) so you start where you left off.
+  useEffect(() => {
+    try {
+      const h = localStorage.getItem('campusera_email_html');
+      const s = localStorage.getItem('campusera_email_subject');
+      if (h) setHtml(h);
+      if (s) setSubject(s);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Auto-save the draft on every change.
+  useEffect(() => {
+    try {
+      localStorage.setItem('campusera_email_html', html);
+      localStorage.setItem('campusera_email_subject', subject);
+    } catch { /* ignore */ }
+  }, [html, subject]);
+
   const students = useMemo(() => users.filter((u) => u.role !== 'owner' && u.role !== 'admin'), [users]);
   const owners = useMemo(() => users.filter((u) => u.role === 'owner'), [users]);
 
