@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   SearchCode,
   UserX,
+  Mail,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -33,8 +34,12 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { handleLogout, isSuperAdmin } = useAuth();
 
-  const navItems = isSuperAdmin 
-    ? [...navigation, { name: 'Manage Admins', href: '/admins', icon: ShieldCheck }]
+  const navItems = isSuperAdmin
+    ? [
+        ...navigation,
+        { name: 'Send Email', href: '/email', icon: Mail },
+        { name: 'Manage Admins', href: '/admins', icon: ShieldCheck },
+      ]
     : navigation.filter(item => !['Users', 'Market Items', 'PG Listings', 'Mess Services'].includes(item.name));
 
   return (

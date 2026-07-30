@@ -18,9 +18,22 @@ interface User {
   isVerifiedOwner?: boolean;
   ownerType?: string;
   canListBoth?: boolean;
+  createdat?: any;
 }
 
 type UserTab = 'students' | 'owners' | 'unverified';
+
+/** Join time in millis, from a Firestore Timestamp, ISO string, or millis. */
+function joinedMs(u: User): number {
+  const c: any = u.createdat;
+  if (!c) return 0;
+  if (typeof c === 'object' && typeof c.seconds === 'number') return c.seconds * 1000;
+  if (typeof c === 'string') { const t = Date.parse(c); return isNaN(t) ? 0 : t; }
+  if (typeof c === 'number') return c;
+  return 0;
+}
+
+const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // "new" = joined in last 7 days
 
 // ── Confirm Dialog ─────────────────────────────────────────────────────────────
 function ConfirmDialog({
@@ -320,7 +333,17 @@ export default function UsersPage() {
     activeTab === 'owners' ? owners
     : activeTab === 'unverified' ? unverifiedOwners
     : students;
-  const filteredUsers = tabList.filter(matchesSearch);
+  // Newest members first, so recent signups are right at the top.
+  const filteredUsers = tabList
+    .filter(matchesSearch)
+    .sort((a, b) => joinedMs(b) - joinedMs(a));
+
+  const now = Date.now();
+  const isNewUser = (u: User) => {
+    const t = joinedMs(u);
+    return t > 0 && now - t < NEW_WINDOW_MS;
+  };
+  const newThisWeek = users.filter(isNewUser).length;
 
   const tabs: { key: UserTab; label: string; count: number }[] = [
     { key: 'students', label: 'Students', count: students.length },
@@ -354,6 +377,11 @@ export default function UsersPage() {
               <Plus className="w-4 h-4" />
               Add Owner
             </button>
+            {newThisWeek > 0 && (
+              <span className="bg-emerald-50 text-emerald-700 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap">
+                +{newThisWeek} new this week
+              </span>
+            )}
             <span className="bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap">
               {filteredUsers.length} users
             </span>
@@ -423,7 +451,12 @@ export default function UsersPage() {
                 ) : filteredUsers.map((u) => (
                   <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-slate-900">{u.name || 'Unknown'}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-900">{u.name || 'Unknown'}</span>
+                        {isNewUser(u) && (
+                          <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">New</span>
+                        )}
+                      </div>
                       <div className="text-slate-500 text-xs">{u.email || 'No email'}</div>
                       {u.phone && <div className="text-xs text-slate-400">{u.phone}</div>}
                       {u.role === 'owner' && u.ownerType && (
